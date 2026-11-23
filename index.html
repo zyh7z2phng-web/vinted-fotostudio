@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Vinted Fotostudio</title>
+  <meta name="description" content="Kleidung freistellen, auf Weiß setzen, mit weichem Schatten. Alles direkt auf dem Gerät.">
+  <meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0c0c0d" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Fotostudio">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header class="appbar">
+    <h1>Fotostudio</h1>
+    <p id="status" class="status" role="status" aria-live="polite">KI wird vorbereitet</p>
+    <div id="progress" class="progress" hidden>
+      <div class="progress-track"><div id="progressBar" class="progress-fill"></div></div>
+      <span id="progressText" class="progress-text"></span>
+    </div>
+  </header>
+
+  <main>
+    <section id="empty" class="empty">
+      <div class="empty-mark"><svg class="icon" aria-hidden="true"><use href="icons/icons.svg#images"/></svg></div>
+      <h2>Aus Handyfotos werden Studiofotos</h2>
+      <p>Füge ein oder mehrere Fotos hinzu. Das Teil wird freigestellt, auf Weiß gesetzt und bekommt einen weichen Schatten. Die Fotos bleiben auf deinem Gerät.</p>
+      <ul class="tips" aria-label="Tipps für gute Ergebnisse">
+        <li><svg class="icon" aria-hidden="true"><use href="icons/icons.svg#shirt"/></svg><span>Ein Teil pro Foto, vollständig im Bild</span></li>
+        <li><svg class="icon" aria-hidden="true"><use href="icons/icons.svg#contrast"/></svg><span>Untergrund mit Kontrast zum Teil</span></li>
+        <li><svg class="icon" aria-hidden="true"><use href="icons/icons.svg#sun"/></svg><span>Helles, gleichmäßiges Licht</span></li>
+      </ul>
+    </section>
+
+    <ul id="grid" class="grid" aria-label="Fotos"></ul>
+  </main>
+
+  <nav class="dock" aria-label="Aktionen">
+    <button id="openSettings" type="button" class="icon-btn" aria-label="Anpassen" title="Anpassen">
+      <svg class="icon" aria-hidden="true"><use href="icons/icons.svg#sliders"/></svg>
+    </button>
+    <label class="add">
+      <input id="fileInput" type="file" accept="image/*,.heic,.heif" multiple>
+      <svg class="icon" aria-hidden="true"><use href="icons/icons.svg#plus"/></svg>
+      <span>Fotos hinzufügen</span>
+    </label>
+    <button id="shareAll" type="button" class="icon-btn" aria-label="Alle sichern" title="Alle sichern" disabled>
+      <svg class="icon" aria-hidden="true"><use href="icons/icons.svg#share"/></svg>
+    </button>
+  </nav>
+
+  <!-- Anpassen: Sheet von unten, Fotos bleiben sichtbar -->
+  <div id="sheetBackdrop" class="backdrop" hidden></div>
+  <section id="sheet" class="sheet" role="dialog" aria-modal="false" aria-labelledby="sheetTitle" hidden>
+    <div class="sheet-head">
+      <span class="grabber" aria-hidden="true"></span>
+      <h2 id="sheetTitle">Anpassen</h2>
+      <button id="sheetDone" type="button" class="text-btn">Fertig</button>
+    </div>
+    <div class="sheet-body">
+      <div class="seg" role="radiogroup" aria-label="Format">
+        <button type="button" role="radio" data-format="portrait">Hochformat 3:4</button>
+        <button type="button" role="radio" data-format="square">Quadrat</button>
+      </div>
+      <div class="group">
+        <label class="slider-row">
+          <span class="row-label">Rand <output id="marginOut"></output></span>
+          <input id="margin" type="range" min="0" max="20" step="1">
+        </label>
+        <label class="slider-row">
+          <span class="row-label">Schatten <output id="shadowOut"></output></span>
+          <input id="shadow" type="range" min="0" max="100" step="1">
+        </label>
+      </div>
+      <div class="group">
+        <label class="switch-row">
+          <span><span class="row-title">Helligkeit und Weißabgleich</span><span class="row-sub">Leicht automatisch korrigieren</span></span>
+          <input id="autoColor" type="checkbox" role="switch" class="switch">
+        </label>
+      </div>
+      <p id="engineNote" class="footnote"></p>
+    </div>
+  </section>
+
+  <!-- Alle sichern: Auswahl -->
+  <div id="actionsBackdrop" class="backdrop" hidden></div>
+  <section id="actions" class="action-sheet" role="dialog" aria-label="Alle sichern" hidden>
+    <div class="action-group">
+      <button id="saveAll" type="button"><svg class="icon" aria-hidden="true"><use href="icons/icons.svg#images"/></svg><span id="saveAllLabel">In Fotos sichern</span></button>
+      <button id="zipAll" type="button"><svg class="icon" aria-hidden="true"><use href="icons/icons.svg#zip"/></svg><span id="zipAllLabel">Als ZIP sichern</span></button>
+    </div>
+    <button id="actionsCancel" type="button" class="action-cancel">Abbrechen</button>
+  </section>
+
+  <!-- Einzelansicht -->
+  <section id="viewer" class="viewer" role="dialog" aria-modal="true" aria-labelledby="viewerTitle" hidden>
+    <div class="viewer-top">
+      <button id="viewerClose" type="button" class="icon-btn" aria-label="Schließen"><svg class="icon" aria-hidden="true"><use href="icons/icons.svg#x"/></svg></button>
+      <h2 id="viewerTitle"></h2>
+      <span class="viewer-spacer" aria-hidden="true"></span>
+    </div>
+    <div class="viewer-stage">
+      <button id="viewerPrev" type="button" class="icon-btn nav-btn" aria-label="Vorheriges Foto"><svg class="icon" aria-hidden="true"><use href="icons/icons.svg#left"/></svg></button>
+      <div class="viewer-frame">
+        <img id="viewerImg" alt="">
+        <div id="viewerBusy" class="viewer-busy" hidden><span class="pulse"></span><span>Wird aktualisiert</span></div>
+      </div>
+      <button id="viewerNext" type="button" class="icon-btn nav-btn" aria-label="Nächstes Foto"><svg class="icon" aria-hidden="true"><use href="icons/icons.svg#right"/></svg></button>
+    </div>
+    <div class="seg viewer-seg" role="radiogroup" aria-label="Ansicht">
+      <button type="button" role="radio" data-view="result" aria-checked="true">Ergebnis</button>
+      <button type="button" role="radio" data-view="original" aria-checked="false">Original</button>
+    </div>
+    <div class="viewer-bar">
+      <button id="viewerEdit" type="button" class="bar-btn"><svg class="icon" aria-hidden="true"><use href="icons/icons.svg#brush"/></svg><span>Nachbessern</span></button>
+      <button id="viewerSave" type="button" class="bar-btn"><svg class="icon" aria-hidden="true"><use href="icons/icons.svg#share"/></svg><span>Sichern</span></button>
+      <button id="viewerDelete" type="button" class="bar-btn danger"><svg class="icon" aria-hidden="true"><use href="icons/icons.svg#trash"/></svg><span>Löschen</span></button>
+    </div>
+  </section>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden>
+    <span class="toast-text"></span>
+    <button type="button"></button>
+  </div>
+
+  <template id="cardTpl">
+    <li class="tile">
+      <button type="button" class="tile-btn">
+        <img class="original" alt="">
+        <img class="result" alt="">
+        <span class="tile-state">
+          <svg class="icon warn" aria-hidden="true"><use href="icons/icons.svg#warn"/></svg>
+          <span class="msg">Wartet</span>
+          <span class="bar" aria-hidden="true"></span>
+        </span>
+      </button>
+    </li>
+  </template>
+
+  <div id="editor" class="editor" hidden>
+    <div class="ed-top">
+      <button type="button" id="edCancel" class="text-btn">Abbrechen</button>
+      <span class="ed-title">Nachbessern</span>
+      <button type="button" id="edDone" class="pill-btn">Fertig</button>
+    </div>
+    <canvas id="edCanvas"></canvas>
+    <div class="ed-bottom">
+      <div class="seg" role="radiogroup" aria-label="Pinsel">
+        <button type="button" role="radio" data-mode="erase"><svg class="icon" aria-hidden="true"><use href="icons/icons.svg#eraser"/></svg>Radieren</button>
+        <button type="button" role="radio" data-mode="restore"><svg class="icon" aria-hidden="true"><use href="icons/icons.svg#brush"/></svg>Zurückholen</button>
+      </div>
+      <div class="ed-row">
+        <label class="ed-size"><span class="dot small" aria-hidden="true"></span><input id="edSize" type="range" min="8" max="140" value="44" aria-label="Pinselgröße"><span class="dot large" aria-hidden="true"></span></label>
+        <button type="button" id="edUndo" class="icon-btn" aria-label="Rückgängig" title="Rückgängig"><svg class="icon" aria-hidden="true"><use href="icons/icons.svg#undo"/></svg></button>
+        <button type="button" id="edFit" class="icon-btn" aria-label="Ganzes Bild zeigen" title="Ganzes Bild zeigen"><svg class="icon" aria-hidden="true"><use href="icons/icons.svg#fit"/></svg></button>
+      </div>
+      <p class="ed-hint">Ein Finger malt. Zwei Finger zoomen und verschieben.</p>
+    </div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

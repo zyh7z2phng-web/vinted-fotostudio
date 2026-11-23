@@ -1,0 +1,15 @@
+# Netlify: statische Seite, kein Build nötig.
+[build]
+  publish = "."
+
+# Cross-Origin-Isolation schon beim ersten Laden (ermöglicht WASM-Threads).
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "require-corp"
+
+[[headers]]
+  for = "/models/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
