@@ -1,10 +1,10 @@
 // Service Worker: Offline-Betrieb + Cross-Origin-Isolation (für WASM-Threads).
-const VERSION = 'v4';
+const VERSION = 'v5';
 const SHELL = `shell-${VERSION}`;
 const BIG = 'big-v2'; // Modelle + ONNX Runtime (groß, versioniert über Dateinamen)
 
 const SHELL_FILES = [
-  './', 'index.html', 'css/app.css', 'js/app.js', 'js/editor.js', 'js/worker.js', 'js/pipeline.js',
+  './', 'index.html', 'css/app.css', 'js/app.js', 'js/editor.js', 'js/worker.js', 'js/infer.js', 'js/pipeline.js',
   'manifest.webmanifest', 'icons/icons.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
   'vendor/jszip.min.js',
 ];
