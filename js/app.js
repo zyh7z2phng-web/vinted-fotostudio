@@ -1,6 +1,7 @@
 import { Editor } from './editor.js';
 
 const WORK_MAX = 1500;           // interne Arbeitsauflösung (lange Seite)
+const SOURCE_MAX = 3000;         // Quellbild für die Verfeinerung (lange Seite)
 const PRODUCT_MAX = [1200, 1600]; // größtmögliche Produktfläche im Export
 const $ = (s) => document.querySelector(s);
 const isTouch = matchMedia('(pointer: coarse)').matches;
@@ -66,25 +67,89 @@ $('#sheetBackdrop').addEventListener('click', closeSheet);
 
 /* ------------------------------------------------------------------ Worker */
 
-const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
-let rid = 0;
-const pending = new Map();
-worker.onmessage = (e) => {
-  const m = e.data;
-  if (m.type === 'progress') { onModelProgress(m); return; }
-  if (m.type === 'backend') { showReady(m); return; }
-  const p = pending.get(m.rid);
-  if (!p) return;
-  pending.delete(m.rid);
-  m.ok ? p.resolve(m.result) : p.reject(new Error(m.error));
-};
-worker.onerror = (e) => { setStatus('Fehler: ' + (e.message || 'Hintergrundprozess abgestürzt'), true); };
-function call(cmd, args, transfer) {
-  return new Promise((resolve, reject) => {
-    const id = ++rid;
-    pending.set(id, { resolve, reject });
-    worker.postMessage({ rid: id, cmd, args }, transfer || []);
-  });
+/** Startet einen Modul-Worker mit einfachem Anfrage/Antwort-Protokoll. */
+function spawn(url, onEvent) {
+  const w = new Worker(new URL(url, import.meta.url), { type: 'module' });
+  const pending = new Map();
+  let rid = 0, dead = false;
+  const failAll = (msg) => {
+    dead = true;
+    for (const p of pending.values()) p.reject(new Error(msg));
+    pending.clear();
+  };
+  w.onmessage = (e) => {
+    const m = e.data;
+    if (m.type) { if (onEvent) onEvent(m); return; }
+    const p = pending.get(m.rid);
+    if (!p) return;
+    pending.delete(m.rid);
+    m.ok ? p.resolve(m.result) : p.reject(new Error(m.error));
+  };
+  w.onerror = (e) => { console.error(e); failAll(e.message || 'Hintergrundprozess abgestürzt'); };
+  return {
+    get dead() { return dead; },
+    call(cmd, args, transfer) {
+      if (dead) return Promise.reject(new Error('Hintergrundprozess beendet'));
+      return new Promise((resolve, reject) => {
+        const id = ++rid;
+        pending.set(id, { resolve, reject });
+        w.postMessage({ rid: id, cmd, args }, transfer || []);
+      });
+    },
+    terminate() { w.terminate(); failAll('Hintergrundprozess beendet'); },
+  };
+}
+
+// Bildverarbeitung + Ablage der Masken (lebt so lange wie die Seite)
+const proc = spawn('./worker.js');
+const call = (cmd, args, transfer) => proc.call(cmd, args, transfer).catch((e) => {
+  if (proc.dead) setStatus('Fehler: ' + e.message, true);
+  throw e;
+});
+
+/* KI-Freistellung in einem eigenen Worker. Der WebAssembly-Speicher der ONNX
+   Runtime wächst bei der ersten Berechnung um ~700 MB und wird nie wieder
+   freigegeben. Zusammen mit der übrigen Verarbeitung hat das auf dem Handy
+   (v.a. iPhone/Safari) den Tab nach dem ersten Foto abstürzen lassen.
+   Sparmodus für Handys: Der KI-Worker wird nach jedem Foto beendet und für das
+   nächste neu gestartet (das Modell kommt dann aus dem Cache), und die Runtime
+   läuft mit einem Thread. Mit mehreren Threads liegt der Speicher als
+   SharedArrayBuffer vor und wird nach dem Beenden erst verzögert frei, alter und
+   neuer Worker würden sich dann überlappen.
+   Testschalter: ?lowmem=1 bzw. ?lowmem=0 */
+const params = new URLSearchParams(location.search);
+const LOW_MEM = params.has('lowmem') ? params.get('lowmem') === '1'
+  : isTouch || /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const THREADS = LOW_MEM ? 1 : 4;
+let forceBackend = params.get('backend');
+let infer = null; // { w, ready }
+
+function onInferEvent(m) {
+  if (m.type === 'progress') { if (!engine) onModelProgress(m); return; }
+  if (m.type === 'backend') noteBackend(m);
+}
+function noteBackend(info) {
+  // WebGPU war unbrauchbar -> beim Neustart gleich WASM nehmen (lädt sonst beide Runtimes)
+  if (info.backend === 'wasm') forceBackend = 'wasm';
+  if (!engine || engine.backend !== info.backend || engine.threads !== info.threads) showReady(info);
+}
+function startInfer() {
+  const w = spawn('./infer.js', onInferEvent);
+  const ready = w.call('init', { force: forceBackend, threads: THREADS }).then((info) => { noteBackend(info); return info; });
+  const inst = { w, ready, failed: false };
+  ready.catch(() => { inst.failed = true; w.terminate(); }); // nächster Versuch startet neu
+  return inst;
+}
+async function segment(args, transfer) {
+  if (!infer || infer.w.dead || infer.failed) infer = startInfer();
+  const cur = infer;
+  try {
+    await cur.ready;
+    return await cur.w.call('segment', { ...args, force: forceBackend, threads: THREADS }, transfer);
+  } finally {
+    if (LOW_MEM && infer === cur) { cur.w.terminate(); infer = null; }
+    else if (cur.w.dead && infer === cur) infer = null;
+  }
 }
 
 function setStatus(t, err) { const s = $('#status'); s.textContent = t; s.classList.toggle('err', !!err); }
@@ -106,8 +171,8 @@ function updateStatus() {
 }
 
 setStatus('KI wird vorbereitet');
-const ready = call('init', { force: new URLSearchParams(location.search).get('backend') }).then((info) => { showReady(info); return info; })
-  .catch((e) => { setStatus('KI konnte nicht starten: ' + e.message, true); throw e; });
+infer = startInfer();
+const ready = infer.ready.catch((e) => { setStatus('KI konnte nicht starten: ' + e.message, true); throw e; });
 
 /* --------------------------------------------------------- Bilder laden */
 
@@ -163,12 +228,26 @@ function drawScaled(src, sx, sy, sw, sh, dw, dh) {
 
 function canvasToBlob(c, type, q) { return new Promise((res) => c.toBlob(res, type, q)); }
 
-function workCanvas(p, img) {
-  const ow = img.naturalWidth, oh = img.naturalHeight;
+/**
+ * Foto laden und sofort auf ein Quellbild (≤ SOURCE_MAX) verkleinern.
+ * Das voll aufgelöste Original (iPhone: 12–48 MP, bis knapp 200 MB dekodiert)
+ * wird direkt danach freigegeben – sonst bleibt es während der KI-Berechnung im
+ * Speicher und Safari beendet den Tab.
+ * Setzt p.ow/p.oh (Quellbild), p.sc und p.ww/p.wh (Arbeitsbild).
+ */
+async function loadSource(p) {
+  const { img, release } = await loadImage(p.file);
+  let src;
+  try {
+    const iw = img.naturalWidth, ih = img.naturalHeight;
+    const ss = Math.min(1, SOURCE_MAX / Math.max(iw, ih));
+    src = drawScaled(img, 0, 0, iw, ih, Math.max(1, Math.round(iw * ss)), Math.max(1, Math.round(ih * ss)));
+  } finally { release(); }
+  const ow = src.width, oh = src.height;
   const sc = Math.min(1, WORK_MAX / Math.max(ow, oh));
   p.ow = ow; p.oh = oh; p.sc = sc;
-  p.ww = Math.round(ow * sc); p.wh = Math.round(oh * sc);
-  return drawScaled(img, 0, 0, ow, oh, p.ww, p.wh);
+  p.ww = Math.max(1, Math.round(ow * sc)); p.wh = Math.max(1, Math.round(oh * sc));
+  return src;
 }
 
 /* ------------------------------------------------------------------ Fotos */
@@ -218,10 +297,9 @@ async function processPhoto(p) {
   try {
     setCard(p, 'busy', 'Wird geladen');
     updateProgress();
-    const { img, release } = await loadImage(p.file);
-    let wc;
+    let src = await loadSource(p), wc;
     try {
-      wc = workCanvas(p, img);
+      wc = drawScaled(src, 0, 0, p.ow, p.oh, p.ww, p.wh);
       const thumbSc = Math.min(1, 900 / Math.max(p.ww, p.wh));
       const tc = drawScaled(wc, 0, 0, p.ww, p.wh, Math.round(p.ww * thumbSc), Math.round(p.wh * thumbSc));
       p.origUrl = URL.createObjectURL(await canvasToBlob(tc, 'image/jpeg', 0.85));
@@ -230,16 +308,17 @@ async function processPhoto(p) {
       const data = wc.getContext('2d').getImageData(0, 0, p.ww, p.wh).data;
       freeCanvas(wc); wc = null;
 
-      await ready;
+      await ready.catch(() => {}); // schlägt der Start fehl, versucht segment() es erneut
       setCard(p, 'busy', 'Wird freigestellt');
-      const seg = await call('segment', { id: p.id, rgba: data.buffer, w: p.ww, h: p.wh }, [data.buffer]);
+      const seg = await segment({ rgba: data.buffer, w: p.ww, h: p.wh }, [data.buffer]);
       if (!seg.rect) throw new Error('Kein Produkt erkannt');
+      await call('put', { id: p.id, alpha: seg.alpha, w: p.ww, h: p.wh }, [seg.alpha]);
       p.rect = seg.rect;
       setCard(p, 'busy', 'Wird verfeinert');
-      await refineFromImage(p, img);
+      await refineFromImage(p, src);
     } finally {
       if (wc) freeCanvas(wc);
-      release();
+      freeCanvas(src);
     }
     if (p.deleted) { p.state = 'skipped'; return; }
     await composePhoto(p);
@@ -412,10 +491,11 @@ async function openEditor(p) {
   setCard(p, 'busy');
   let imageData, alpha;
   try {
-    const { img, release } = await loadImage(p.file);
-    const wc = workCanvas(p, img);
+    const src = await loadSource(p);
+    const wc = drawScaled(src, 0, 0, p.ow, p.oh, p.ww, p.wh);
+    freeCanvas(src);
     imageData = wc.getContext('2d').getImageData(0, 0, p.ww, p.wh);
-    freeCanvas(wc); release();
+    freeCanvas(wc);
     const a = await call('getAlpha', { id: p.id });
     alpha = new Uint8Array(a.alpha);
   } catch (e) { setCard(p, 'ready'); showToast('Nachbessern konnte nicht geöffnet werden.'); return; }
@@ -427,8 +507,8 @@ async function openEditor(p) {
     const { rect } = await call('setAlpha', { id: p.id, alpha: result.buffer }, [result.buffer]);
     if (!rect) throw new Error('Alles wurde entfernt');
     p.rect = rect;
-    const { img, release } = await loadImage(p.file);
-    try { await refineFromImage(p, img); } finally { release(); }
+    const src = await loadSource(p);
+    try { await refineFromImage(p, src); } finally { freeCanvas(src); }
     await composePhoto(p);
   } catch (e) {
     setCard(p, 'error', errorText(e) + ' Tippen zum Wiederholen.');
@@ -612,4 +692,4 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 }
 
 // Testhilfe (Automatisierung): Dateien ohne Dateiauswahl hinzufügen
-window.__fotostudio = { addFiles, photos, settings, call, editor };
+window.__fotostudio = { addFiles, photos, settings, call, segment, editor, lowMem: LOW_MEM };

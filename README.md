@@ -11,7 +11,8 @@ index.html              Oberfläche
 css/app.css             Design (mobil zuerst, Hell/Dunkel)
 js/app.js               Ablauf, Karten, Einstellungen, Speichern/Teilen/ZIP
 js/editor.js            Nachbessern: Pinsel, Rückgängig, Pinch-Zoom, Verschieben
-js/worker.js            Web Worker: Modell laden (WebGPU/WASM), Verarbeitung
+js/infer.js             Web Worker: KI-Modell laden (WebGPU/WASM) und freistellen
+js/worker.js            Web Worker: Kanten, Farben, Komposition, Masken-Ablage
 js/pipeline.js          Bildverarbeitung (reines JS): Maske, Kanten, Farben, Schatten
 sw.js                   Service Worker: Offline + Cross-Origin-Isolation
 manifest.webmanifest    PWA-Manifest, icons/ = App-Icons
@@ -32,6 +33,8 @@ node tools/serve.mjs 8080
 Danach http://localhost:8080 öffnen. Alternativ geht `python3 -m http.server 8080`.
 
 Testschalter: `?backend=wasm` erzwingt den WASM-Pfad (so läuft es auf Geräten ohne WebGPU).
+`?lowmem=1` bzw. `?lowmem=0` schaltet den Speicher-Sparmodus ein oder aus (auf Handys
+standardmäßig an: KI-Worker wird nach jedem Foto neu gestartet, ein Thread).
 
 ## Auf dem Handy nutzen (Deployment)
 

@@ -239,6 +239,23 @@ export function bboxOf(alpha, w, h, thr = 0.1) {
   return x1 < 0 ? null : { x0, y0, x1, y1 };
 }
 
+/**
+ * Produkt-Rechteck (Arbeits-Pixel) plus 3 % Polster für die Verfeinerung.
+ * scale: Wertebereich des Alphas (1 für Float, 255 für Uint8).
+ */
+export function paddedRect(alpha, w, h, scale = 1) {
+  const bb = bboxOf(alpha, w, h, 0.1 * scale);
+  if (!bb) return null;
+  const pad = Math.round(Math.max(w, h) * 0.03);
+  const x0 = Math.max(0, bb.x0 - pad), y0 = Math.max(0, bb.y0 - pad);
+  const x1 = Math.min(w - 1, bb.x1 + pad), y1 = Math.min(h - 1, bb.y1 + pad);
+  return {
+    x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1, // gepolstert (Arbeits-Pixel)
+    bx: bb.x0, by: bb.y0, bw: bb.x1 - bb.x0 + 1, bh: bb.y1 - bb.y0 + 1, // Produkt
+    ww: w, wh: h,
+  };
+}
+
 /** Ausschnitt (Rechteck in Pixeln) aus einem Kanal. */
 export function cropPlane(src, w, x0, y0, cw, ch) {
   const out = new Float32Array(cw * ch);
